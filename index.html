@@ -150,9 +150,16 @@
         measurementId: "G-XHD5XZFH93"
     };
 
-    // Инициализация Firebase
-    const app = firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+    // Инициализация Firebase (с проверкой)
+    let app, db;
+    try {
+        app = firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        console.log("Firebase инициализирован успешно");
+    } catch (error) {
+        console.error("Ошибка инициализации Firebase:", error);
+        alert("Ошибка подключения к базе данных. Проверьте консоль.");
+    }
 
     // КОНФИГУРАЦИЯ
     const ADMIN_PASSWORD = "admin123";
@@ -286,6 +293,7 @@
     async function saveDataToFirebase(data) {
         showLoading(true);
         try {
+            if (!db) throw new Error("Firestore не инициализирован");
             const dataRef = db.doc("analytics/" + DATA_DOC_ID);
             await dataRef.set({
                 data: data,
@@ -315,20 +323,17 @@
 
     // === FIREBASE: ЗАГРУЗКА ДАННЫХ (ИСПРАВЛЕННАЯ ЛОГИКА) ===
     
-    // Функция обработки отсутствия данных
     function handleNoData() {
         rawData = [];
         uploadStatusSpan.innerText = "Нет данных в облаке";
         uploadStatusSpan.style.color = "#b3b3b3";
         errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">В файле пока нет данных. Пожалуйста, загрузите файл администратору.</div>';
         
-        // Очищаем графики
         if (monthlyChart) monthlyChart.destroy();
         if (typeTrendChart) typeTrendChart.destroy();
         errorCharts.forEach(c => c.destroy());
         monthlyChart = typeTrendChart = errorCharts = null;
         
-        // Сбрасываем KPI
         const cards = document.querySelectorAll('#kpiContainer .kpi-card');
         if (cards.length >= 4) {
             cards[0].querySelector('.kpi-value').innerText = '—';
@@ -338,12 +343,18 @@
         }
     }
 
-    // 1. Принудительная загрузка при старте страницы
+    // 1. Принудительная загрузка при старте страницы (главное исправление)
     async function loadInitialData() {
+        if (!db) {
+            console.error("Firestore не доступен");
+            errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#ff4444;">Ошибка подключения к базе данных.</div>';
+            return;
+        }
+
         showLoading(true);
         try {
             const dataRef = db.doc("analytics/" + DATA_DOC_ID);
-            const docSnap = await dataRef.get(); // Запрос данных один раз
+            const docSnap = await dataRef.get(); // Запрашиваем данные один раз
 
             if (docSnap.exists()) {
                 const data = docSnap.data().data;
@@ -353,12 +364,11 @@
                     applyFiltersAndRender();
                     uploadStatusSpan.innerText = "Данные загружены";
                     uploadStatusSpan.style.color = "#888";
-                    console.log("Данные загружены:", rawData.length);
+                    console.log("Данные успешно загружены:", rawData.length);
                 } else {
                     handleNoData();
                 }
             } else {
-                // Документ пуст или не существует
                 handleNoData();
             }
         } catch (error) {
@@ -369,14 +379,15 @@
         }
     }
 
-    // 2. Слушатель изменений (для реального времени)
+    // 2. Слушатель изменений (для автообновления)
     function startListening() {
+        if (!db) return;
         const dataRef = db.doc("analytics/" + DATA_DOC_ID);
+        
         onSnapshot(dataRef, (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data().data;
                 if (data && Array.isArray(data) && data.length > 0) {
-                    // Если данные изменились (кто-то загрузил новый файл)
                     rawData = data;
                     rebuildFiltersFromData();
                     applyFiltersAndRender();
@@ -757,10 +768,10 @@
     // === ИНИЦИАЛИЗАЦИЯ ===
     checkSession();
     
-    // 1. Загружаем данные при старте
+    // 1. Принудительно загружаем данные при старте страницы
     loadInitialData();
     
-    // 2. Слушаем изменения в реальном времени
+    // 2. Запускаем слушатель изменений для реального времени
     startListening();
 
 </script>
