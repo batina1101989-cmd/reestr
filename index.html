@@ -141,7 +141,9 @@
     let app, db;
     let firebaseInitialized = false;
     let firebaseErrorDetected = false;
-    // 1. Инициализация Firebase
+    let listenerUnsub = null; // Переменная для хранения ссылки на слушатель
+
+    // 1. Инициализация Firebase с защитой от ошибок
     if (typeof firebase === 'undefined') {
         console.error("❌ Библиотека Firebase не загружена.");
         firebaseErrorDetected = true;
@@ -334,7 +336,7 @@
             showLoading(false);
         }
     }
-    // === FIREBASE: ЧТЕНИЕ (ИСПРАВЛЕНО) ===
+    // === FIREBASE: ЧТЕНИЕ (УЛУЧШЕННАЯ ЛОГИКА) ===
     function handleNoData() {
         rawData = [];
         uploadStatusSpan.innerText = "Нет данных в облаке";
@@ -357,20 +359,17 @@
         }
     }
     function updateDashboardFromSnapshot(docData) {
-        // ИСПРАВЛЕНИЕ: Строгая проверка на null
         if (!docData) {
-            console.log("Document does not exist.");
+            console.log("Document does not exist yet.");
             handleNoData();
             return;
         }
-        // ИСПРАВЛЕНИЕ: Проверка поля data внутри документа
         const data = docData.data;
         if (!data) {
             console.log("Document exists but 'data' field is missing.");
             handleNoData();
             return;
         }
-        // ИСПРАВЛЕНИЕ: Проверка на массив
         if (!Array.isArray(data)) {
             console.error("Data field is not an array:", data);
             handleNoData();
@@ -389,19 +388,32 @@
             uploadStatusSpan.style.color = "#ffcc00";
         }
     }
+    
+    // === ФУНКЦИЯ ПОДКЛЮЧЕНИЯ СЛУШАТЕЛЯ ===
     function startListening() {
         if (!firebaseInitialized || !db) {
             console.log("Firebase не инициализирован, слушатель не запущен.");
+            // Пытаемся переподключиться через 2 секунды
+            setTimeout(startListening, 2000);
             return;
         }
+        
+        // Если слушатель уже есть, отключаем его (на случай обновления страницы)
+        if (listenerUnsub) {
+            listenerUnsub();
+            listenerUnsub = null;
+        }
+
         const dataRef = db.doc("analytics/" + DATA_DOC_ID);
-        dataRef.onSnapshot(
+        
+        listenerUnsub = dataRef.onSnapshot(
             (docSnapshot) => {
                 const docData = docSnapshot.exists ? docSnapshot.data() : null;
                 updateDashboardFromSnapshot(docData);
             },
             (error) => {
                 console.warn("Firestore listener error (CORS/Network):", error.message);
+                // Вместо полной ошибки, просто показываем сообщение в UI
                 errorsChartsContainer.innerHTML = `<div style="text-align:center; padding:20px; color:#ff4444;">Не удалось загрузить данные: ${error.message}<br>Проверьте правила Firestore или подключение.</div>`;
                 if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
                 if (typeTrendChart) { typeTrendChart.destroy(); typeTrendChart = null; }
@@ -409,6 +421,9 @@
                     errorCharts.forEach(c => c.destroy());
                     errorCharts = [];
                 }
+                
+                // Пытаемся переподключиться через 5 секунд
+                setTimeout(startListening, 5000);
             }
         );
     }
