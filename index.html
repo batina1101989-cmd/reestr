@@ -73,7 +73,6 @@
         .modal-content { background: var(--card-bg); padding: 30px; border-radius: var(--radius-md); border: 1px solid var(--border-color); text-align: center; min-width: 300px; max-width: 90%; }
         .modal-content h3 { margin-bottom: 20px; color: var(--primary-yellow); }
         .modal-content input { width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-white); font-size: 16px; box-sizing: border-box; }
-        
         /* Mobile Adaptability */
         @media (max-width: 768px) {
             .header { flex-direction: column; align-items: flex-start; }
@@ -146,10 +145,9 @@
         projectId: "itog-reestr",
         storageBucket: "itog-reestr.firebasestorage.app",
         messagingSenderId: "676691874911",
-        appId: "1:676691874911:web:d492661026f00e6b7ef7ea",
+        appId: 1:676691874911:web:d492661026f00e6b7ef7ea,
         measurementId: "G-XHD5XZFH93"
     };
-
     // Инициализация Firebase (с проверкой)
     let app, db;
     try {
@@ -160,14 +158,11 @@
         console.error("Ошибка инициализации Firebase:", error);
         alert("Ошибка подключения к базе данных. Проверьте консоль.");
     }
-
     // КОНФИГУРАЦИЯ
     const ADMIN_PASSWORD = "admin123";
     const DATA_DOC_ID = "analytics-data";
-    
     let rawData = [];
     let isAdmin = false;
-    
     // Элементы DOM
     const fileInput = document.getElementById('uploadFileInput');
     const loadBtn = document.getElementById('loadFileBtn');
@@ -187,8 +182,10 @@
     const adminPasswordInput = document.getElementById('adminPassword');
     const confirmLoginBtn = document.getElementById('confirmLoginBtn');
     const cancelLoginBtn = document.getElementById('cancelLoginBtn');
-    
     let monthlyChart = null, typeTrendChart = null, errorCharts = [];
+    
+    // Флаг для предотвращения двойной инициализации
+    let isDataLoaded = false;
 
     // === АВТОРИЗАЦИЯ ===
     function checkSession() {
@@ -200,20 +197,17 @@
             toggleAdminUI(false);
         }
     }
-    
     function toggleAdminUI(isAuth) {
         authControls.style.display = 'flex';
         loginBtn.style.display = isAuth ? 'none' : 'inline-block';
         logoutBtn.style.display = isAuth ? 'inline-block' : 'none';
         uploadSection.style.display = isAuth ? 'flex' : 'none';
     }
-    
     loginBtn.addEventListener('click', () => {
         loginModal.classList.add('active');
         adminPasswordInput.value = '';
         adminPasswordInput.focus();
     });
-    
     confirmLoginBtn.addEventListener('click', () => {
         if (adminPasswordInput.value === ADMIN_PASSWORD) {
             isAdmin = true;
@@ -227,17 +221,14 @@
             adminPasswordInput.focus();
         }
     });
-    
     logoutBtn.addEventListener('click', () => {
         isAdmin = false;
         sessionStorage.removeItem('isAdmin');
         toggleAdminUI(false);
     });
-    
     cancelLoginBtn.addEventListener('click', () => loginModal.classList.remove('active'));
     loginModal.addEventListener('click', (e) => { if (e.target === loginModal) loginModal.classList.remove('active'); });
     adminPasswordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') confirmLoginBtn.click(); });
-
     // === ОБРАБОТКА ДАННЫХ ===
     function normalizeString(str) {
         if (str === undefined || str === null) return "";
@@ -246,12 +237,10 @@
         s = s.replace(/\s+/g, ' ');
         return s;
     }
-
     function parseExcelData(workbook) {
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(sheet, { defval: "", blankrows: false });
         if (!json.length) return [];
-        
         const results = [];
         for (let row of json) {
             const getVal = (keys) => {
@@ -263,7 +252,6 @@
                 }
                 return "";
             };
-            
             const month = getVal(["Месяц", "месяц", "Month", "месяцы"]);
             const group = getVal(["Группа ошибок", "ГруппаОшибок", "group", "Ошибка"]);
             const errorName = getVal(["Название ошибки", "Название", "Опис", "error"]);
@@ -271,24 +259,19 @@
             const critical = normalizeString(criticalRaw);
             const typeRaw = row["Тип COPC"] || row["Тип СОРС"] || row["тип сорс"] || row["Тип"] || "";
             let type = normalizeString(typeRaw);
-            
             let percentRaw = row["% отклонений от фонограмм"] || row["% отклонений"] || row["процент"] || row["%"] || "0";
             let percent = parseFloat(String(percentRaw).replace(',', '.').replace('%', ''));
             if (isNaN(percent)) percent = 0;
-            
             let countRaw = row["Отклонений с влиянием (шт.)"] || row["Отклонений"] || row["кол-во"] || "0";
             let countVal = parseInt(String(countRaw).replace(/\D/g, ''));
             if (isNaN(countVal)) countVal = 0;
-            
             if (month === "") continue;
-            
             results.push({
                 month, group, errorName, critical, type, percentDeviation: percent, deviationCount: countVal
             });
         }
         return results;
     }
-
     // === FIREBASE: СОХРАНЕНИЕ ===
     async function saveDataToFirebase(data) {
         showLoading(true);
@@ -320,20 +303,16 @@
             showLoading(false);
         }
     }
-
-    // === FIREBASE: ЗАГРУЗКА ДАННЫХ (ИСПРАВЛЕННАЯ ЛОГИКА) ===
-    
+    // === FIREBASE: ОБНОВЛЕНИЕ (ИСПРАВЛЕННАЯ ЛОГИКА) ===
     function handleNoData() {
         rawData = [];
         uploadStatusSpan.innerText = "Нет данных в облаке";
         uploadStatusSpan.style.color = "#b3b3b3";
         errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">В файле пока нет данных. Пожалуйста, загрузите файл администратору.</div>';
-        
         if (monthlyChart) monthlyChart.destroy();
         if (typeTrendChart) typeTrendChart.destroy();
         errorCharts.forEach(c => c.destroy());
         monthlyChart = typeTrendChart = errorCharts = null;
-        
         const cards = document.querySelectorAll('#kpiContainer .kpi-card');
         if (cards.length >= 4) {
             cards[0].querySelector('.kpi-value').innerText = '—';
@@ -343,63 +322,54 @@
         }
     }
 
-    // 1. Принудительная загрузка при старте страницы (главное исправление)
-    async function loadInitialData() {
+    // === НОВАЯ УНИФИЦИРОВАННАЯ ЛОГИКА ПОЛУЧЕНИЯ ДАННЫХ ===
+    function updateDashboardFromSnapshot(docData) {
+        if (!docData) {
+            handleNoData();
+            return;
+        }
+
+        const data = docData.data ? docData.data : [];
+        if (!Array.isArray(data) || data.length === 0) {
+            handleNoData();
+            return;
+        }
+
+        // Если данные изменились или это первый запуск
+        if (JSON.stringify(rawData) !== JSON.stringify(data)) {
+            rawData = data;
+            rebuildFiltersFromData();
+            applyFiltersAndRender();
+            uploadStatusSpan.innerText = "Данные загружены";
+            uploadStatusSpan.style.color = "#ffcc00";
+        }
+    }
+
+    function startListening() {
         if (!db) {
             console.error("Firestore не доступен");
             errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#ff4444;">Ошибка подключения к базе данных.</div>';
             return;
         }
-
-        showLoading(true);
-        try {
-            const dataRef = db.doc("analytics/" + DATA_DOC_ID);
-            const docSnap = await dataRef.get(); // Запрашиваем данные один раз
-
-            if (docSnap.exists()) {
-                const data = docSnap.data().data;
-                if (data && Array.isArray(data) && data.length > 0) {
-                    rawData = data;
-                    rebuildFiltersFromData();
-                    applyFiltersAndRender();
-                    uploadStatusSpan.innerText = "Данные загружены";
-                    uploadStatusSpan.style.color = "#888";
-                    console.log("Данные успешно загружены:", rawData.length);
-                } else {
-                    handleNoData();
-                }
-            } else {
-                handleNoData();
-            }
-        } catch (error) {
-            console.error("Ошибка загрузки:", error);
-            errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#ff4444;">Ошибка загрузки данных из облака.</div>';
-        } finally {
-            showLoading(false);
-        }
-    }
-
-    // 2. Слушатель изменений (для автообновления)
-    function startListening() {
-        if (!db) return;
         const dataRef = db.doc("analytics/" + DATA_DOC_ID);
         
-        onSnapshot(dataRef, (docSnap) => {
-            if (docSnap.exists()) {
-                const data = docSnap.data().data;
-                if (data && Array.isArray(data) && data.length > 0) {
-                    rawData = data;
-                    rebuildFiltersFromData();
-                    applyFiltersAndRender();
-                    uploadStatusSpan.innerText = "Данные обновлены";
-                    uploadStatusSpan.style.color = "#ffcc00";
-                }
+        // Слушаем изменения. 
+        // Важно: Firestore сам оптимизирует запросы. Мы просто реагируем на данные.
+        const unsubscribe = dataRef.onSnapshot((docSnapshot) => {
+            if (docSnapshot.exists) {
+                updateDashboardFromSnapshot(docSnapshot);
             } else {
                 handleNoData();
             }
         }, (error) => {
-            console.error("Ошибка слушателя:", error);
+            console.error("Ошибка слушателя Firestore:", error);
+            if (!error.code || !error.code.includes('unavailable')) {
+                errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#ff4444;">Ошибка соединения с базой данных.</div>';
+            }
         });
+
+        // Опционально: сохраняем ссылку на отписку, если нужно позже
+        // window.unsubscribeData = unsubscribe; 
     }
 
     // === ЛОГИКА ОТОБРАЖЕНИЯ ===
@@ -408,33 +378,28 @@
         const groupsSet = new Set();
         const criticalSet = new Set();
         const typesSet = new Set();
-        
         for (let row of rawData) {
             if (row.month) monthsSet.add(row.month);
             if (row.group) groupsSet.add(row.group);
             if (row.critical && row.critical !== "") criticalSet.add(row.critical);
             if (row.type && row.type !== "") typesSet.add(row.type);
         }
-        
         const monthOrder = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
         let monthHtml = '<option value="all">Все месяцы</option>';
         Array.from(monthsSet).sort((a,b) => monthOrder.indexOf(a) - monthOrder.indexOf(b)).forEach(m => {
             monthHtml += `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`;
         });
         filterMonth.innerHTML = monthHtml;
-        
         let groupHtml = '<option value="all">Все группы</option>';
         Array.from(groupsSet).sort().forEach(g => {
             groupHtml += `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`;
         });
         filterGroup.innerHTML = groupHtml;
-        
         let critHtml = '<option value="all">Все</option>';
         Array.from(criticalSet).sort().forEach(c => {
             critHtml += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`;
         });
         filterCritical.innerHTML = critHtml;
-        
         let typeHtml = '<option value="all">Все типы</option>';
         if (typesSet.size === 0) {
             typeHtml = '<option value="all">Нет данных</option>';
@@ -445,13 +410,11 @@
         }
         filterType.innerHTML = typeHtml;
     }
-
     function getFilteredData() {
         const monthVal = filterMonth.value;
         const groupVal = filterGroup.value;
         const criticalVal = filterCritical.value;
         const typeVal = filterType.value;
-        
         return rawData.filter(row => {
             if (monthVal !== "all" && row.month !== monthVal) return false;
             if (groupVal !== "all" && row.group !== groupVal) return false;
@@ -460,25 +423,20 @@
             return true;
         });
     }
-
     function computeAggregates(filteredData) {
         if (!filteredData.length) return { monthsSet: new Set(), totalErrorsCleaned: 0, avgPercentAll: 0, uniqueGroups: 0 };
-        
         const monthsSet = new Set();
         let totalErrorsCleaned = 0;
         let sumPercent = 0;
         const groupsSet = new Set();
-        
         for (let row of filteredData) {
             monthsSet.add(row.month);
             groupsSet.add(row.group);
             sumPercent += row.percentDeviation;
             if (row.critical !== "-") totalErrorsCleaned += row.deviationCount;
         }
-        
         return { monthsSet, totalErrorsCleaned, avgPercentAll: sumPercent / filteredData.length, uniqueGroups: groupsSet.size };
     }
-
     function renderKPI(agg) {
         const cards = document.querySelectorAll('#kpiContainer .kpi-card');
         if (cards.length >= 4) {
@@ -488,7 +446,6 @@
             cards[3].querySelector('.kpi-value').innerText = agg.uniqueGroups;
         }
     }
-
     // === ГРАФИКИ ===
     function getLineColor() { return '#0055aa'; }
     function getBarColor() { return '#ffcc00'; }
@@ -496,7 +453,6 @@
         const hue = Math.floor(Math.random() * 360);
         return `hsl(${hue}, 70%, 60%)`;
     }
-    
     function getMinMax(datasets) {
         let max = -Infinity, min = Infinity;
         datasets.forEach(ds => {
@@ -514,7 +470,6 @@
         const padding = range * 0.15;
         return { min: min - padding, max: max + padding };
     }
-
     function renderMonthlyTrend(filteredData) {
         const monthMap = new Map();
         for (let row of filteredData) {
@@ -524,18 +479,13 @@
             m.count += 1;
             if (row.critical !== "-") m.sumErrors += row.deviationCount;
         }
-        
         const monthOrder = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
         let months = Array.from(monthMap.keys()).sort((a,b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-        
         const countData = months.map(m => monthMap.get(m).sumErrors);
         const percentData = months.map(m => monthMap.get(m).sumPercent / monthMap.get(m).count);
-        
         const countLimits = getMinMax([{data: countData}]);
         const percentLimits = getMinMax([{data: percentData}]);
-        
         if (monthlyChart) monthlyChart.destroy();
-        
         const ctx = document.getElementById('monthlyTrendChart').getContext('2d');
         monthlyChart = new Chart(ctx, {
             type: 'line',
@@ -558,7 +508,6 @@
             }
         });
     }
-
     function renderTypeTrend(filteredData) {
         const typeMonthMap = new Map();
         for (let row of filteredData) {
@@ -571,12 +520,10 @@
             data.count += 1;
             if (row.critical !== "-") data.sumErrors += row.deviationCount;
         }
-        
         const monthOrder = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
         const allMonths = new Set();
         typeMonthMap.forEach(m => m.forEach((_, month) => allMonths.add(month)));
         const months = Array.from(allMonths).sort((a,b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-        
         const datasets = [];
         typeMonthMap.forEach((dataMap, typeLabel) => {
             const percentData = months.map(m => { const d = dataMap.get(m); return d ? d.sumPercent / d.count : 0; });
@@ -584,12 +531,9 @@
             datasets.push({ label: `${typeLabel} (%)`, data: percentData, type: 'line', borderColor: getRandomColor(), borderWidth: 1, tension: 0.3, fill: false, pointRadius: 2, yAxisID: 'y1' });
             datasets.push({ label: `${typeLabel} (шт)`, data: countData, type: 'bar', backgroundColor: getRandomColor(), borderColor: getRandomColor(), borderWidth: 0, barPercentage: 0.5, categoryPercentage: 0.8 });
         });
-        
         const limitsY = getMinMax(datasets.filter(d => d.type === 'bar'));
         const limitsY1 = getMinMax(datasets.filter(d => d.type === 'line'));
-        
         if (typeTrendChart) typeTrendChart.destroy();
-        
         const ctx = document.getElementById('typeTrendChart').getContext('2d');
         typeTrendChart = new Chart(ctx, {
             type: 'line',
@@ -609,12 +553,10 @@
             }
         });
     }
-
     function renderErrorCharts(filteredData) {
         errorsChartsContainer.innerHTML = '';
         errorCharts.forEach(chart => chart.destroy());
         errorCharts = [];
-        
         const errorMap = new Map();
         for (let row of filteredData) {
             if (!row.errorName) continue;
@@ -626,16 +568,13 @@
             data.count += 1;
             if (row.critical !== "-") data.sumErrors += row.deviationCount;
         }
-        
         if (errorMap.size === 0) return;
-        
         const limit = 5;
         let errorsToShow = Array.from(errorMap.keys());
         if (errorsToShow.length > limit) {
             errorsToShow = errorsToShow.slice(0, limit);
             errorsToShow.push("...и другие (лимит 5)");
         }
-        
         errorsToShow.forEach(errorName => {
             if (errorName === "...и другие (лимит 5)") {
                 const div = document.createElement('div');
@@ -645,27 +584,21 @@
                 errorsChartsContainer.appendChild(div);
                 return;
             }
-            
             const dataMap = errorMap.get(errorName);
             const monthOrder = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
             const allMonths = new Set();
             dataMap.forEach((_, month) => allMonths.add(month));
             const months = Array.from(allMonths).sort((a,b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-            
             const percentData = months.map(m => { const d = dataMap.get(m); return d ? d.sumPercent / d.count : 0; });
             const countData = months.map(m => { const d = dataMap.get(m); return d ? d.sumErrors : 0; });
-            
             const countLimits = getMinMax([{data: countData}]);
             const percentLimits = getMinMax([{data: percentData}]);
-            
             const card = document.createElement('div');
             card.className = 'chart-card';
             card.innerHTML = `<div class="chart-header"><h3>🚨 Динамика ошибки: ${escapeHtml(errorName)}</h3></div><canvas id="errorChart_${errorName.replace(/[^a-z0-9]/gi, '_')}"></canvas>`;
             errorsChartsContainer.appendChild(card);
-            
             const canvasId = `errorChart_${errorName.replace(/[^a-z0-9]/gi, '_')}`;
             const ctx = document.getElementById(canvasId).getContext('2d');
-            
             const chart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -689,14 +622,11 @@
             errorCharts.push(chart);
         });
     }
-
     function applyFiltersAndRender() {
         if (!rawData.length) return;
-        
         const filtered = getFilteredData();
         const agg = computeAggregates(filtered);
         renderKPI(agg);
-        
         if (filtered.length === 0) {
             if (monthlyChart) monthlyChart.destroy();
             if (typeTrendChart) typeTrendChart.destroy();
@@ -704,12 +634,10 @@
             errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">Нет данных по выбранным фильтрам</div>';
             return;
         }
-        
         renderMonthlyTrend(filtered);
         renderTypeTrend(filtered);
         renderErrorCharts(filtered);
     }
-
     function resetFilters() {
         filterMonth.value = "all";
         filterGroup.value = "all";
@@ -717,17 +645,14 @@
         filterType.value = "all";
         applyFiltersAndRender();
     }
-
     function escapeHtml(str) {
         if (!str) return '';
         return str.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
     }
-
     function showLoading(show) {
         if (show) loadingOverlay.classList.add('active');
         else loadingOverlay.classList.remove('active');
     }
-
     // === СОБЫТИЯ ===
     loadBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', (e) => {
@@ -739,7 +664,6 @@
     filterCritical.addEventListener('change', applyFiltersAndRender);
     filterType.addEventListener('change', applyFiltersAndRender);
     resetBtn.addEventListener('click', resetFilters);
-
     // === ЗАГРУЗКА ФАЙЛА ===
     function loadFileWithPassword(file) {
         if (!file) return;
@@ -749,12 +673,10 @@
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
                 const parsed = parseExcelData(workbook);
-                
                 if (parsed.length === 0) {
                     alert("Файл пуст или структура не найдена.");
                     return;
                 }
-                
                 uploadStatusSpan.innerText = `⏳ Загрузка в облако... (${parsed.length} записей)`;
                 uploadStatusSpan.style.color = "#ffcc00";
                 saveDataToFirebase(parsed);
@@ -764,16 +686,12 @@
         };
         reader.readAsArrayBuffer(file);
     }
-
     // === ИНИЦИАЛИЗАЦИЯ ===
     checkSession();
-    
-    // 1. Принудительно загружаем данные при старте страницы
-    loadInitialData();
-    
-    // 2. Запускаем слушатель изменений для реального времени
+    // Убираем loadInitialData и оставляем только слушатель
+    // Firestore сам пришлет данные, как только они появятся, 
+    // или покажет ошибку/пустоту, если их нет.
     startListening();
-
 </script>
 </body>
 </html>
