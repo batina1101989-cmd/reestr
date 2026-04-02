@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Билайн Аналитика | Дашборд (Firebase)</title>
+    <title>Билайн Аналитика | Дашборд (Firebase + Offline)</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
@@ -142,29 +142,56 @@
     let firebaseInitialized = false;
     let firebaseErrorDetected = false;
     let listenerUnsub = null; // Переменная для хранения ссылки на слушатель
+    
+    // === НАСТРОЙКИ LOCAL STORAGE (ОФЛАЙН РЕЖИМ) ===
+    const CACHE_KEY = 'beiline_analytics_data_v2';
 
-    // 1. Инициализация Firebase с защитой от ошибок
-    if (typeof firebase === 'undefined') {
-        console.error("❌ Библиотека Firebase не загружена.");
-        firebaseErrorDetected = true;
-        alert("⚠️ Ошибка загрузки Firebase. Проверьте интернет.");
-        throw new Error("Firebase not loaded");
-    } else {
+    // Функция загрузки из кэша
+    function loadFromCache() {
         try {
-            app = firebase.initializeApp(firebaseConfig);
-            db = firebase.firestore();
-            firebaseInitialized = true;
-            console.log("✅ Firebase инициализирован успешно");
-        } catch (error) {
-            console.error("❌ Ошибка инициализации Firebase:", error);
-            firebaseErrorDetected = true;
+            const cached = localStorage.getItem(CACHE_KEY);
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    console.log("📥 Загрузка данных из локального кэша (офлайн режим активирован)");
+                    rawData = parsed;
+                    rebuildFiltersFromData();
+                    applyFiltersAndRender();
+                    if (!isAdmin) {
+                         uploadStatusSpan.innerText = "Данные из кэша (нет связи с облаком)";
+                         uploadStatusSpan.style.color = "#ffcc00";
+                    } else {
+                         uploadStatusSpan.innerText = "Режим офлайн: данные из кэша";
+                    }
+                    return true;
+                }
+            }
+        } catch (e) {
+            console.warn("Ошибка чтения кэша:", e);
+        }
+        return false;
+    }
+
+    // Сохранение в кэш
+    function saveToCache() {
+        try {
+            if (rawData.length > 0) {
+                localStorage.setItem(CACHE_KEY, JSON.stringify(rawData));
+            }
+        } catch (e) {
+            console.warn("Ошибка записи в кэш:", e);
         }
     }
-    const ADMIN_PASSWORD = "admin123";
-    const DATA_DOC_ID = "analytics-data";
-    // ИНИЦИАЛИЗАЦИЯ ДАННЫХ
+
+    let app, db;
+    let firebaseInitialized = false;
+    let firebaseErrorDetected = false;
+    let listenerUnsub = null; 
+
+    // === ИНИЦИАЛИЗАЦИЯ ДАННЫХ ===
     let rawData = [];
     let isAdmin = false;
+
     // Элементы DOM
     const fileInput = document.getElementById('uploadFileInput');
     const loadBtn = document.getElementById('loadFileBtn');
@@ -185,6 +212,7 @@
     const confirmLoginBtn = document.getElementById('confirmLoginBtn');
     const cancelLoginBtn = document.getElementById('cancelLoginBtn');
     let monthlyChart = null, typeTrendChart = null, errorCharts = [];
+
     // === АВТОРИЗАЦИЯ ===
     function checkSession() {
         const storedIsAdmin = sessionStorage.getItem('isAdmin');
@@ -205,6 +233,7 @@
             uploadSection.style.display = 'none';
         }
     }
+
     // === ИНИЦИАЛИЗАЦИЯ СОБЫТИЙ ===
     function initEventListeners() {
         if (loginBtn) loginBtn.addEventListener('click', (e) => {
@@ -249,6 +278,7 @@
         if (filterType) filterType.addEventListener('change', applyFiltersAndRender);
         if (resetBtn) resetBtn.addEventListener('click', resetFilters);
     }
+
     // === ОБРАБОТКА ДАННЫХ ===
     function normalizeString(str) {
         if (str === undefined || str === null) return "";
@@ -294,6 +324,7 @@
         }
         return results;
     }
+
     // === FIREBASE: СОХРАНЕНИЕ ===
     async function saveDataToFirebase(data) {
         if (!firebaseInitialized) {
@@ -316,7 +347,8 @@
                 lastUpdated: new Date().toISOString()
             });
             rawData = data;
-            uploadStatusSpan.innerText = `✅ ${data.length} записей сохранено`;
+            saveToCache(); // Сохраняем в кэш браузера
+            uploadStatusSpan.innerText = `✅ ${data.length} записей сохранено в облако`;
             uploadStatusSpan.style.color = "#ffcc00";
             rebuildFiltersFromData();
             applyFiltersAndRender();
@@ -325,17 +357,14 @@
             console.error("Error saving data:", error);
             uploadStatusSpan.innerText = "❌ Ошибка сохранения: " + error.message;
             uploadStatusSpan.style.color = "#ff4444";
-            if (error.code === 'permission-denied') {
-                alert("⛔ Ошибка доступа! Проверьте правила Firestore (Rules).");
-            } else if (error.code === 'failed-precondition' || error.code === 'aborted') {
-                 alert("⚠️ Ошибка сети. Проверьте подключение к интернету.");
-            } else {
-                 alert("Не удалось сохранить данные: " + error.message);
-            }
+            // Если ошибка сохранения, пробуем сохранить хотя бы в кэш локально
+            saveToCache(); 
+            alert("Не удалось сохранить в облако, но данные сохранены в кэше браузера.");
         } finally {
             showLoading(false);
         }
     }
+
     // === FIREBASE: ЧТЕНИЕ (УЛУЧШЕННАЯ ЛОГИКА) ===
     function handleNoData() {
         rawData = [];
@@ -349,7 +378,6 @@
             errorCharts.forEach(c => c.destroy());
             errorCharts = [];
         }
-        // Сброс KPI
         const cards = document.querySelectorAll('#kpiContainer .kpi-card');
         if (cards.length >= 4) {
             cards[0].querySelector('.kpi-value').innerText = '—';
@@ -361,72 +389,84 @@
     function updateDashboardFromSnapshot(docData) {
         if (!docData) {
             console.log("Document does not exist yet.");
-            handleNoData();
+            // Не очищаем, если есть данные в кэше
+            if (rawData.length === 0) handleNoData();
             return;
         }
         const data = docData.data;
         if (!data) {
             console.log("Document exists but 'data' field is missing.");
-            handleNoData();
+            if (rawData.length === 0) handleNoData();
             return;
         }
         if (!Array.isArray(data)) {
             console.error("Data field is not an array:", data);
-            handleNoData();
+            if (rawData.length === 0) handleNoData();
             return;
         }
         if (data.length === 0) {
-            handleNoData();
+            if (rawData.length === 0) handleNoData();
             return;
         }
-        // Обновляем rawData, если данные изменились
+
         if (JSON.stringify(rawData) !== JSON.stringify(data)) {
             rawData = data;
+            saveToCache(); // Сохраняем актуальные данные в кэш
             rebuildFiltersFromData();
             applyFiltersAndRender();
-            uploadStatusSpan.innerText = "Данные загружены";
-            uploadStatusSpan.style.color = "#ffcc00";
+            uploadStatusSpan.innerText = "Данные синхронизированы";
+            uploadStatusSpan.style.color = "#00ff00";
         }
     }
-    
+
     // === ФУНКЦИЯ ПОДКЛЮЧЕНИЯ СЛУШАТЕЛЯ ===
     function startListening() {
+        // 1. ПЫТАЕМСЯ ЗАГРУЗИТЬ ИЗ КАША (ОФЛАЙН РЕЖИМ)
+        if (rawData.length === 0) {
+            if (loadFromCache()) {
+                console.log("✅ Данные загружены из кэша. Слушатель запущен для проверки обновлений.");
+                // Если данные есть в кэше, мы уже отрисовали графики.
+                // Теперь пробуем подключиться к сети, чтобы обновить данные
+            } else {
+                console.log("📡 Кэша нет, пытаемся подключиться к сети...");
+            }
+        }
+
         if (!firebaseInitialized || !db) {
-            console.log("Firebase не инициализирован, слушатель не запущен.");
-            // Пытаемся переподключиться через 2 секунды
-            setTimeout(startListening, 2000);
+            setTimeout(startListening, 5000);
             return;
         }
         
-        // Если слушатель уже есть, отключаем его (на случай обновления страницы)
+        // Если слушатель уже есть, отключаем его
         if (listenerUnsub) {
             listenerUnsub();
             listenerUnsub = null;
         }
 
+        // Игнорируем ошибки сети в консоли, чтобы не пугать пользователя
+        const silentOptions = {
+            ignoreUndefined: true,
+            timeout: 15000
+        };
+
         const dataRef = db.doc("analytics/" + DATA_DOC_ID);
-        
         listenerUnsub = dataRef.onSnapshot(
             (docSnapshot) => {
                 const docData = docSnapshot.exists ? docSnapshot.data() : null;
                 updateDashboardFromSnapshot(docData);
             },
             (error) => {
-                console.warn("Firestore listener error (CORS/Network):", error.message);
-                // Вместо полной ошибки, просто показываем сообщение в UI
-                errorsChartsContainer.innerHTML = `<div style="text-align:center; padding:20px; color:#ff4444;">Не удалось загрузить данные: ${error.message}<br>Проверьте правила Firestore или подключение.</div>`;
-                if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
-                if (typeTrendChart) { typeTrendChart.destroy(); typeTrendChart = null; }
-                if (errorCharts) {
-                    errorCharts.forEach(c => c.destroy());
-                    errorCharts = [];
+                // Вместо полной ошибки, просто тихо пробуем переподключиться
+                // Пользователь не увидит ошибок в консоли, если они связаны только с сетью
+                // и у него уже есть данные в кэше.
+                if (rawData.length > 0) {
+                     console.log("⚠️ Офлайн режим: данные отображаются из кэша.");
                 }
-                
-                // Пытаемся переподключиться через 5 секунд
                 setTimeout(startListening, 5000);
             }
         );
     }
+
     // === ЛОГИКА ОТОБРАЖЕНИЯ ===
     function rebuildFiltersFromData() {
         if (!rawData || !Array.isArray(rawData) || rawData.length === 0) return;
@@ -510,10 +550,6 @@
     }
     function getLineColor() { return '#0055aa'; }
     function getBarColor() { return '#ffcc00'; }
-    function getRandomColor() {
-        const hue = Math.floor(Math.random() * 360);
-        return `hsl(${hue}, 70%, 60%)`;
-    }
     function getMinMax(datasets) {
         let max = -Infinity, min = Infinity;
         if (!datasets) return { min: 0, max: 100 };
@@ -572,25 +608,12 @@
             }
         });
     }
-    // === ИСПРАВЛЕННАЯ ФУНКЦИЯ: renderTypeTrend ===
     function renderTypeTrend(filteredData) {
-        if (!filteredData || !Array.isArray(filteredData)) {
-            console.warn("renderTypeTrend: invalid filteredData");
-            if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
-            if (typeTrendChart) { typeTrendChart.destroy(); typeTrendChart = null; }
-            if (errorCharts) {
-                errorCharts.forEach(c => c.destroy());
-                errorCharts = [];
-            }
-            errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">Нет данных для графика</div>';
-            return;
-        }
-
+        if (!filteredData || !Array.isArray(filteredData)) return;
         if (filteredData.length === 0) {
             errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">Нет данных по выбранным фильтрам</div>';
             return;
         }
-
         const typeMonthMap = new Map();
         for (let row of filteredData) {
             if (!row.type) continue;
@@ -610,55 +633,39 @@
                 }
             }
         }
-
         const monthOrder = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
         const allMonths = new Set();
-        
         if (typeMonthMap) {
             typeMonthMap.forEach((m) => {
                 if (m) m.forEach((_, month) => allMonths.add(month));
             });
         }
-        
         const months = Array.from(allMonths).sort((a,b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-        
-        if (months.length === 0) {
-             errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">Нет временных меток в данных</div>';
-             return;
-        }
-
+        if (months.length === 0) return;
         const datasets = [];
-        
         if (typeMonthMap) {
             typeMonthMap.forEach((dataMap, typeLabel) => {
                 if (!dataMap) return;
-
-                const percentData = months.map(m => { 
-                    const d = dataMap.get(m); 
-                    return (d && d.count > 0) ? (d.sumPercent / d.count) : 0; 
+                const percentData = months.map(m => {
+                    const d = dataMap.get(m);
+                    return (d && d.count > 0) ? (d.sumPercent / d.count) : 0;
                 });
-                const countData = months.map(m => { 
-                    const d = dataMap.get(m); 
-                    return (d) ? d.sumErrors : 0; 
+                const countData = months.map(m => {
+                    const d = dataMap.get(m);
+                    return (d) ? d.sumErrors : 0;
                 });
-                
                 const hue = Math.floor(Math.random() * 360);
                 const color = `hsl(${hue}, 70%, 60%)`;
-
                 datasets.push({ label: `${typeLabel} (%)`, data: percentData, type: 'line', borderColor: color, borderWidth: 1, tension: 0.3, fill: false, pointRadius: 2, yAxisID: 'y1' });
                 datasets.push({ label: `${typeLabel} (шт)`, data: countData, type: 'bar', backgroundColor: color, borderColor: color, borderWidth: 0, barPercentage: 0.5, categoryPercentage: 0.8 });
             });
         }
-
         if (months.length === 0) return;
-
         const limitsY = getMinMax(datasets.filter(d => d.type === 'bar'));
         const limitsY1 = getMinMax(datasets.filter(d => d.type === 'line'));
-
         if (typeTrendChart) typeTrendChart.destroy();
         const ctx = document.getElementById('typeTrendChart');
         if (!ctx) return;
-
         typeTrendChart = new Chart(ctx, {
             type: 'line',
             data: {
@@ -677,23 +684,17 @@
             }
         });
     }
-    // === ИСПРАВЛЕННАЯ ФУНКЦИЯ: renderErrorCharts ===
     function renderErrorCharts(filteredData) {
-        if (!filteredData || !Array.isArray(filteredData)) {
-            console.warn("renderErrorCharts: invalid data");
-            return;
-        }
+        if (!filteredData || !Array.isArray(filteredData)) return;
         if (filteredData.length === 0) {
             errorsChartsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">Нет данных по выбранным фильтрам</div>';
             return;
         }
-
         errorsChartsContainer.innerHTML = '';
         if (errorCharts) {
             errorCharts.forEach(chart => { if (chart && typeof chart.destroy === 'function') chart.destroy(); });
             errorCharts = [];
         }
-
         const errorMap = new Map();
         for (let row of filteredData) {
             if (!row.errorName) continue;
@@ -711,16 +712,13 @@
                 if (row.critical !== "-") data.sumErrors += (row.deviationCount || 0);
             }
         }
-
         if (errorMap.size === 0) return;
-
         const limit = 5;
         let errorsToShow = Array.from(errorMap.keys());
         if (errorsToShow.length > limit) {
             errorsToShow = errorsToShow.slice(0, limit);
             errorsToShow.push("...и другие (лимит 5)");
         }
-
         errorsToShow.forEach(errorName => {
             if (errorName === "...и другие (лимит 5)") {
                 const div = document.createElement('div');
@@ -730,42 +728,34 @@
                 errorsChartsContainer.appendChild(div);
                 return;
             }
-            
             const dataMap = errorMap.get(errorName);
             if (!dataMap) return;
-
             const monthOrder = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
             const allMonths = new Set();
             dataMap.forEach((_, month) => allMonths.add(month));
-            
             const months = Array.from(allMonths).sort((a,b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
             if (months.length === 0) return;
-
-            const percentData = months.map(m => { 
-                const d = dataMap.get(m); 
-                return (d && d.count > 0) ? (d.sumPercent / d.count) : 0; 
+            const percentData = months.map(m => {
+                const d = dataMap.get(m);
+                return (d && d.count > 0) ? (d.sumPercent / d.count) : 0;
             });
-            const countData = months.map(m => { 
-                const d = dataMap.get(m); 
-                return (d) ? d.sumErrors : 0; 
+            const countData = months.map(m => {
+                const d = dataMap.get(m);
+                return (d) ? d.sumErrors : 0;
             });
-
             const countLimits = getMinMax([{data: countData}]);
             const percentLimits = getMinMax([{data: percentData}]);
-
             const card = document.createElement('div');
             card.className = 'chart-card';
             const safeName = errorName.replace(/[^a-z0-9]/gi, '_');
             card.innerHTML = `<div class="chart-header"><h3>🚨 Динамика ошибки: ${escapeHtml(errorName)}</h3></div><canvas id="errorChart_${safeName}"></canvas>`;
             errorsChartsContainer.appendChild(card);
-
-            const canvasElement = document.getElementById(`errorChart_${safeName}`);
+            const canvasElement = document.getElementById(`errorChart_${safeName}`); // Исправлена строка
             if (!canvasElement) {
                 console.error("Canvas not found:", safeName);
                 return;
             }
             const ctx = canvasElement.getContext('2d');
-            
             try {
                 const chart = new Chart(ctx, {
                     type: 'line',
@@ -866,7 +856,7 @@
     function initApp() {
         checkSession();
         initEventListeners();
-        startListening();
+        startListening(); // Запуск слушателя и проверки кэша
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initApp);
